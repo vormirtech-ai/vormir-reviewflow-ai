@@ -1,0 +1,72 @@
+name: Deploy
+
+# Runs on every push to main, after the same validation as CI.
+# Repository configuration (Settings > Secrets and variables > Actions):
+#   Variables: CLOUDFLARE_PROJECT_NAME, VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY,
+#              VITE_PUBLIC_SITE_URL, VITE_CONTACT_EMAIL (optional), SUPABASE_PROJECT_REF (optional)
+#   Secrets:   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
+#              SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD (only for the optional backend job)
+# The Gemini key is NOT a GitHub or Cloudflare secret: set it once with `supabase secrets set`.
+# Each deploy job is skipped until its variable is configured, so the workflow never fails on a fresh fork.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+
+  frontend:
+    needs: validate
+    if: ${{ vars.CLOUDFLARE_PROJECT_NAME != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          # Public values only. They end up in the browser bundle by design.
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_PUBLIC_SITE_URL: ${{ vars.VITE_PUBLIC_SITE_URL }}
+          VITE_CONTACT_EMAIL: ${{ vars.VITE_CONTACT_EMAIL }}
+      - name: Fail if a server-side key value reached the bundle
+        # Matches key VALUES (Google API keys, Supabase secret keys), not variable names.
+        run: |
+          if grep -rlE "AIza[0-9A-Za-z_-]{35}|sb_secret_[0-9A-Za-z_-]{20,}" dist; then
+            echo "A server-side key was found in the frontend build." >&2
+            exit 1
+          fi
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME }} --branch=main
+
+  backend:
+    needs: validate
+    if: ${{ vars.SUPABASE_PROJECT_REF != '' }}
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - run: supabase link --project-ref ${{ vars.SUPABASE_PROJECT_REF }}
+      - run: supabase db push
+      - run: supabase functions deploy --project-ref ${{ vars.SUPABASE_PROJECT_REF }}

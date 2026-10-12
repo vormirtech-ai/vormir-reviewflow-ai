@@ -1,0 +1,46 @@
+# Local development configuration for the Supabase CLI (`supabase start`).
+project_id = "vormir-reviewflow-ai"
+
+[api]
+port = 54321
+schemas = ["public"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[studio]
+port = 54323
+
+[auth]
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173/auth/callback"]
+enable_signup = true
+minimum_password_length = 8
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+
+# The functions verify callers themselves: public ones are intentionally anonymous and
+# rate-limited; authenticated ones validate the user token with auth.getUser().
+# Gateway JWT verification is off so the publishable (non-JWT) API keys work.
+[functions.generate-review-drafts]
+verify_jwt = false
+
+[functions.resolve-public-funnel]
+verify_jwt = false
+
+[functions.track-funnel-event]
+verify_jwt = false
+
+[functions.create-qr-asset]
+verify_jwt = false
+
+[functions.export-analytics]
+verify_jwt = false
